@@ -214,6 +214,7 @@ class App(QObject):
         except Exception as e:
             log.warning("翻訳モデルの確認・ダウンロードに失敗しました: %s", e)
             self.bridge.notify.emit(f"翻訳モデルを用意できませんでした: {e}")
+        self.preparing = f"翻訳モデル {self.cfg.llm.model} を読み込み中…"
         try:
             translator.warmup()
             log.info("翻訳モデル %s を読み込みました", self.cfg.llm.model)

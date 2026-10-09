@@ -98,6 +98,10 @@ class Translator:
         progress(f"翻訳モデル {self.llm.model} をダウンロード中…")
         base = self.llm.base_url.rstrip("/")
         last_shown = -10
+        # モデルは複数のファイル（層）に分かれていて、層ごとに total / completed が届く。
+        # 全体の進み具合は、これまでに見た層の合計で計算する
+        totals: dict[str, int] = {}
+        completed: dict[str, int] = {}
         # ダウンロードは時間がかかるので、データが届く間隔だけで時間切れを判断する
         with self.client.stream(
             "POST", f"{base}/api/pull", json={"model": self.llm.model, "stream": True}, timeout=httpx.Timeout(300.0, connect=5.0)
@@ -109,12 +113,18 @@ class Translator:
                 data = json.loads(line)
                 if "error" in data:
                     raise RuntimeError(f"モデルのダウンロードに失敗しました: {data['error']}")
-                total, done = data.get("total"), data.get("completed")
-                if total and done is not None:
+                digest = data.get("digest")
+                if digest and data.get("total"):
+                    totals[digest] = data["total"]
+                    completed[digest] = data.get("completed", 0)
+                    total, done = sum(totals.values()), sum(completed.values())
                     pct = int(done / total * 100)
-                    if pct >= last_shown + 10 or pct == 100:
+                    if pct >= last_shown + 10:
                         last_shown = pct
-                        msg = f"翻訳モデル {self.llm.model} をダウンロード中… {pct}%（{total / 2**30:.1f} GB）"
+                        msg = (
+                            f"翻訳モデル {self.llm.model} をダウンロード中… {pct}%"
+                            f"（{done / 2**30:.1f} / {total / 2**30:.1f} GB）"
+                        )
                         log.info("%s", msg)
                         progress(msg)
                 if data.get("status") == "success":

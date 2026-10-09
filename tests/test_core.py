@@ -134,13 +134,15 @@ def test_ensure_model_pulls_only_when_missing(tmp_path):
         if request.url.path == "/api/tags":
             return httpx.Response(200, json={"models": installed})
         pulled.append(json.loads(request.content)["model"])
-        lines = [{"status": "pulling", "total": 100, "completed": c} for c in (0, 50, 100)] + [{"status": "success"}]
+        big = [{"status": "pulling", "digest": "a", "total": 3 * 2**30, "completed": c * 2**30} for c in (0, 1, 3)]
+        small = [{"status": "pulling", "digest": "b", "total": 1000, "completed": c} for c in (0, 1000)]
+        lines = big + small + [{"status": "success"}]
         return httpx.Response(200, content="\n".join(json.dumps(l) for l in lines))
 
     t = _translator(handler, tmp_path, model="translategemma:4b")
     messages = []
     assert t.ensure_model(messages.append) is True
-    assert pulled == ["translategemma:4b"] and messages[-1].endswith("100%（0.0 GB）")
+    assert pulled == ["translategemma:4b"] and messages[-1].endswith("100%（3.0 / 3.0 GB）")
 
     installed.append({"name": "translategemma:4b"})
     assert t.ensure_model() is False and len(pulled) == 1
