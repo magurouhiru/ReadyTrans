@@ -54,14 +54,11 @@ class Pipeline:
             log.info("  OCR: %r @ (%.0f, %.0f, %.0f x %.0f)", b.text, b.x, b.y, b.w, b.h)
         return blocks
 
-    def translate(self, blocks):
+    def translate_iter(self, blocks):
         start = time.perf_counter()
         log.info("翻訳開始: %d 件", len(blocks))
-        result = self.translator.translate([b.text for b in blocks])
+        yield from self.translator.translate_iter([b.text for b in blocks])
         log.info("翻訳完了（%.2f 秒）", time.perf_counter() - start)
-        for b, ja in zip(blocks, result):
-            log.info("  %r → %r", b.text, ja)
-        return result
 
 
 class Bridge(QObject):
@@ -193,9 +190,13 @@ class App(QObject):
         self.last_text = text
         if not blocks:
             return region, [], []
-        if force:
-            self.bridge.status.emit(region, "翻訳中…")
-        return region, blocks, self.pipeline.translate(blocks)
+        # 訳せた段落から順に表示する（まだのものは「…」）
+        translations: list[str | None] = [None] * len(blocks)
+        self.bridge.done.emit(region, blocks, list(translations))
+        for i, ja in self.pipeline.translate_iter(blocks):
+            translations[i] = ja
+            self.bridge.done.emit(region, blocks, list(translations))
+        return None
 
     def _warmup(self) -> None:
         try:
@@ -228,13 +229,17 @@ class App(QObject):
             QTimer.singleShot(2000, self.overlay.clear)
             return
         items = [
-            Item(self.overlay.to_logical(region, b.x, b.y, b.w, b.h), ja)
+            Item(
+                self.overlay.to_logical(region, b.x, b.y, b.w, b.h),
+                "…" if ja is None else (ja or "（訳せませんでした）"),
+            )
             for b, ja in zip(blocks, translations)
         ]
-        log.info("表示: %d 件（画面倍率 %.2f）", len(items), self.overlay.dpr)
-        for item in items:
-            r = item.rect
-            log.info("  表示位置 (%.0f, %.0f, %.0f x %.0f): %r", r.x(), r.y(), r.width(), r.height(), item.text)
+        if all(ja is not None for ja in translations):
+            log.info("表示: %d 件（画面倍率 %.2f）", len(items), self.overlay.dpr)
+            for item in items:
+                r = item.rect
+                log.info("  表示位置 (%.0f, %.0f, %.0f x %.0f): %r", r.x(), r.y(), r.width(), r.height(), item.text)
         self.overlay.show_translations(region, items)
 
     def on_failed(self, region: Region | None, message: str) -> None:

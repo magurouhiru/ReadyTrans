@@ -1,10 +1,15 @@
-"""ローカル LLM（Ollama または OpenAI 互換 API）で英語を日本語に訳す。"""
+"""ローカル LLM（Ollama または OpenAI 互換 API）で英語を日本語に訳す。
+
+段落ごとに1回ずつ問い合わせ、返事は少しずつ受け取る（ストリーミング）。
+長い文でも、AI が書き続けている限り時間切れにならない。
+"""
 
 from __future__ import annotations
 
 import json
 import logging
-import re
+import time
+from collections.abc import Iterator
 
 import httpx
 
@@ -15,21 +20,13 @@ log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 あなたはゲームの翻訳者です。ゲーム画面から OCR で読み取った英語を自然な日本語に訳します。
-- 入力は JSON の文字列配列です。同じ順番・同じ個数の日本語の文字列配列を {"translations": [...]} の形で返してください。
-- OCR の読み間違いらしい文字は文脈から推測して直してから訳してください。
-- 数字、記号、キー表記（[E]、LMB など）はそのまま残してください。
-- 訳文以外の説明は書かないでください。"""
-
-
-SINGLE_PROMPT = """\
-あなたはゲームの翻訳者です。ゲーム画面から OCR で読み取った英語を自然な日本語に訳します。
-- 訳文だけを1行で返してください。説明や引用符は付けないでください。
+- 訳文だけを返してください。説明や引用符は付けないでください。
 - OCR の読み間違いらしい文字は文脈から推測して直してから訳してください。
 - 数字、記号、キー表記（[E]、LMB など）はそのまま残してください。"""
 
 
-def build_system_prompt(profile: Profile, base: str = SYSTEM_PROMPT) -> str:
-    parts = [base]
+def build_system_prompt(profile: Profile) -> str:
+    parts = [SYSTEM_PROMPT]
     if profile.instructions:
         parts.append("\nゲーム固有の指示:\n" + profile.instructions)
     if profile.glossary:
@@ -40,20 +37,29 @@ def build_system_prompt(profile: Profile, base: str = SYSTEM_PROMPT) -> str:
     return "\n".join(parts)
 
 
-def parse_translations(content: str, expected: int) -> list[str] | None:
-    """モデルの返答から訳文の配列を取り出す。個数が合わなければ None。"""
-    match = re.search(r"\{.*\}|\[.*\]", content, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    if isinstance(data, dict):
-        data = data.get("translations")
-    if not isinstance(data, list) or len(data) != expected:
-        return None
-    return [str(x) for x in data]
+TRANSLATEGEMMA_PROMPT = """\
+You are a professional English (en) to Japanese (ja) translator. Your goal is to accurately convey \
+the meaning and nuances of the original English text while adhering to Japanese grammar, vocabulary, \
+and cultural sensitivities.
+Produce only the Japanese translation, without any additional explanations or commentary. \
+Please translate the following English text into Japanese:
+
+
+"""
+
+
+def detect_style(model: str) -> str:
+    """モデル名から問い合わせ方を決める。翻訳専用モデルは決まった書式でないとうまく訳せない。"""
+    name = model.lower()
+    if "translategemma" in name:
+        return "translategemma"
+    if "lfm2" in name and "enjp" in name:
+        return "lfm2"
+    return "chat"
+
+
+def clean_output(text: str) -> str:
+    return text.strip().strip('"「」').strip()
 
 
 class Translator:
@@ -61,10 +67,11 @@ class Translator:
         self.llm = llm
         self.profile = profile
         self.cache = cache
+        self.style = llm.style if llm.style != "auto" else detect_style(llm.model)
         self.system_prompt = build_system_prompt(profile)
-        self.single_prompt = build_system_prompt(profile, SINGLE_PROMPT)
         self._think_off = True
-        # 接続はすぐ失敗させ、返事（生成）だけ長めに待つ
+        log.info("翻訳モデル %s（問い合わせ方: %s）", llm.model, self.style)
+        # timeout は「次のデータが届くまで」の待ち時間。ストリーミングなので書き続けている限り切れない
         self.client = httpx.Client(timeout=httpx.Timeout(llm.timeout_seconds, connect=5.0))
 
     def warmup(self) -> None:
@@ -75,108 +82,108 @@ class Translator:
         self.client.post(f"{base}/api/generate", json={"model": self.llm.model, "keep_alive": "30m"})
 
     def translate(self, texts: list[str]) -> list[str]:
-        results: list[str | None] = [None] * len(texts)
-        todo: list[int] = []
+        results = [""] * len(texts)
+        for i, ja in self.translate_iter(texts):
+            results[i] = ja
+        return results
+
+    def translate_iter(self, texts: list[str]) -> Iterator[tuple[int, str]]:
+        """訳せたものから順に (番号, 訳文) を返す。キャッシュにあるものは先にまとめて返す。"""
+        todo = []
         for i, text in enumerate(texts):
             cached = self.cache.get(self._cache_key(), text) if self.cache else None
             if cached:
-                results[i] = cached
+                yield i, cached
             else:
                 todo.append(i)
         if len(todo) < len(texts):
             log.info("キャッシュから %d 件", len(texts) - len(todo))
 
-        if todo:
-            batch = [texts[i] for i in todo]
-            translated = self._translate_batch(batch)
-            if translated is None:
-                # まとめて訳すと個数がずれたり空になったりすることがあるので、1件ずつ訳し直す
-                translated = [self._translate_one(t) for t in batch]
-            for i, ja in zip(todo, translated):
-                results[i] = ja
-                if self.cache and ja:
-                    self.cache.put(self._cache_key(), texts[i], ja)
-
-        return [r or "" for r in results]
+        for i in todo:
+            start = time.perf_counter()
+            ja = clean_output(self._chat(texts[i]))
+            log.info("  訳 %d/%d（%.2f 秒）: %r → %r", i + 1, len(texts), time.perf_counter() - start, texts[i], ja)
+            if ja and self.cache:
+                self.cache.put(self._cache_key(), texts[i], ja)
+            yield i, ja
 
     def _cache_key(self) -> str:
         return f"{self.llm.model}|{self.profile.key}"
 
-    def _translate_batch(self, texts: list[str]) -> list[str] | None:
-        user = json.dumps(texts, ensure_ascii=False)
-        content = self._chat(self.system_prompt, user, json_schema=True)
-        log.info("AIの返事: %r", content[:500])
-        parsed = parse_translations(content, len(texts))
-        if parsed is None:
-            log.warning("AIの返事の形式が違うので、1件ずつ訳し直します")
-            return None
-        if any(src.strip() and not ja.strip() for src, ja in zip(texts, parsed)):
-            log.warning("空の訳が返ってきたので、1件ずつ訳し直します")
-            return None
-        return parsed
-
-    def _translate_one(self, text: str) -> str:
-        content = self._chat(self.single_prompt, text, json_schema=False)
-        log.info("AIの返事（1件）: %r", content[:500])
-        return content.strip().strip('"「」').strip()
-
-    def _chat(self, system: str, user: str, json_schema: bool) -> str:
+    def _chat(self, text: str) -> str:
         try:
-            return self._chat_raw(system, user, json_schema)
+            return "".join(self._stream(text))
         except httpx.TimeoutException as e:
             raise TimeoutError(
-                f"翻訳AIが {self.llm.timeout_seconds:.0f} 秒以内に返事をしませんでした。"
+                f"翻訳AIから {self.llm.timeout_seconds:.0f} 秒以上返事がありませんでした。"
                 "ゲームと AI で VRAM が足りていない可能性があります（`ollama ps` で確認できます）。"
             ) from e
 
-    def _chat_raw(self, system: str, user: str, json_schema: bool) -> str:
-        # 返事が終わらなくなる（空白を出し続ける等）のを防ぐため、出力の長さに上限をつける
-        max_tokens = 128 + len(user) * 4
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
+    def _stream(self, text: str) -> Iterator[str]:
+        # 返事が終わらなくなる（同じ文を繰り返す等）のを防ぐため、出力の長さに上限をつける
+        max_tokens = 128 + len(text) * 4
+        temperature = self.llm.temperature
+        if self.style == "translategemma":
+            # 用語集やゲームごとの指示は使えない（決まった1通のメッセージで訳すモデル）
+            messages = [{"role": "user", "content": TRANSLATEGEMMA_PROMPT + text}]
+        elif self.style == "lfm2":
+            messages = [
+                {"role": "system", "content": "Translate to Japanese."},
+                {"role": "user", "content": text},
+            ]
+            temperature = 0.5
+        else:
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": text},
+            ]
         base = self.llm.base_url.rstrip("/")
+
         if self.llm.backend == "ollama":
             body = {
                 "model": self.llm.model,
                 "messages": messages,
-                "stream": False,
-                "options": {"temperature": self.llm.temperature, "num_predict": max_tokens},
+                "stream": True,
+                "options": {"temperature": temperature, "num_predict": max_tokens},
                 "keep_alive": "30m",
             }
-            if json_schema:
-                body["format"] = {
-                    "type": "object",
-                    "properties": {"translations": {"type": "array", "items": {"type": "string"}}},
-                    "required": ["translations"],
-                }
             if self._think_off:
-                # Gemma 4 など考えるモードを持つモデルは、考える分だけ遅くなり、
-                # 出力の上限を使い切って訳が空になることがあるので切る
+                # Gemma 4 など考えるモードを持つモデルは、考える分だけ遅くなるので切る
                 body["think"] = False
-            resp = self.client.post(f"{base}/api/chat", json=body)
-            if resp.status_code == 400 and "think" in resp.text and self._think_off:
-                log.info("このモデルは think の指定に対応していないので外します")
-                self._think_off = False
-                body.pop("think")
-                resp = self.client.post(f"{base}/api/chat", json=body)
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("done_reason") == "length":
-                log.warning("AIの返事が長さの上限で打ち切られました")
-            if data.get("message", {}).get("thinking"):
-                log.info("AIが考えるモードで返事をしました（%d 文字）", len(data["message"]["thinking"]))
-            return data["message"]["content"]
+            with self.client.stream("POST", f"{base}/api/chat", json=body) as resp:
+                if resp.status_code == 400 and self._think_off:
+                    resp.read()
+                    if "think" in resp.text:
+                        log.info("このモデルは think の指定に対応していないので外します")
+                        self._think_off = False
+                        yield from self._stream(text)
+                        return
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    if "error" in data:
+                        raise RuntimeError(f"翻訳AIのエラー: {data['error']}")
+                    yield data.get("message", {}).get("content", "")
+                    if data.get("done") and data.get("done_reason") == "length":
+                        log.warning("AIの返事が長さの上限で打ち切られました")
+            return
 
-        resp = self.client.post(
-            f"{base}/v1/chat/completions",
-            json={
-                "model": self.llm.model,
-                "messages": messages,
-                "temperature": self.llm.temperature,
-                "max_tokens": max_tokens,
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        body = {
+            "model": self.llm.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        with self.client.stream("POST", f"{base}/v1/chat/completions", json=body) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                choices = json.loads(payload).get("choices") or [{}]
+                yield choices[0].get("delta", {}).get("content") or ""

@@ -7,8 +7,14 @@ profile = "default"
 # "ollama" か "openai"（LM Studio や llama.cpp の server など OpenAI 互換 API）
 backend = "ollama"
 base_url = "http://localhost:11434"
-# VRAM の目安: gemma3:4b → 6GB, gemma3:12b → 12GB, gemma3:27b → 20GB 以上
-model = "gemma3:12b"
+# おすすめ:
+#   translategemma:4b  … 翻訳専用で速い（既定、約3GB）。用語集・ゲームごとの指示は効きません
+#   translategemma:12b … 同じく翻訳専用で、より正確（約8GB）
+#   gemma4 / gemma3 など … 汎用モデル。用語集や指示がよく効くが重い
+#   LFM2-350M-ENJP-MT  … とても軽い英日翻訳専用モデル（GGUF を Ollama に入れて使う）
+model = "translategemma:4b"
+# 問い合わせ方。"auto" ならモデル名から自動で決めます（"chat" / "translategemma" / "lfm2"）
+style = "auto"
 temperature = 0.2
 # 返事を待つ最大秒数。ゲーム中は GPU を取り合うので長めに
 timeout_seconds = 120

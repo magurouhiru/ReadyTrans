@@ -18,8 +18,8 @@
 ## セットアップ
 
 ```powershell
-# 1. 翻訳モデルを取得（VRAM 目安: 4b → 6GB, 12b → 12GB, 27b → 20GB 以上）
-ollama pull gemma3:12b
+# 1. 翻訳モデルを取得（翻訳専用の TranslateGemma、約3GB）
+ollama pull translategemma:4b
 
 # 2. このリポジトリを取得して依存関係を入れる
 git clone https://github.com/magurouhiru/ReadyTrans.git
@@ -70,9 +70,17 @@ instructions = "アイテム名は英語のまま残してください。"
 
 ## 翻訳AIを変える
 
-`config.toml` の `[llm]` で切り替えます。
+`config.toml` の `[llm]` の `model` で切り替えます。
 
-- Ollama の別モデル: `model = "gemma3:4b"` など
+| モデル | 特徴 |
+|---|---|
+| `translategemma:4b`（既定） | Google の翻訳専用 Gemma。速くて軽い。用語集・ゲームごとの指示は効かない |
+| `translategemma:12b` | 同じく翻訳専用で、より正確。重い |
+| `gemma4` / `gemma3` など汎用モデル | 用語集やゲームごとの指示がよく効く。重い |
+| LFM2-350M-ENJP-MT | とても軽い英日翻訳専用モデル。固有名詞に弱い |
+
+翻訳は段落ごとに行い、訳せたものから順に表示します。
+
 - LM Studio や llama.cpp の server: `backend = "openai"`、`base_url = "http://localhost:1234"`
 
 ## アンチチートについて

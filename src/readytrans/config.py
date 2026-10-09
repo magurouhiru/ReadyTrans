@@ -11,7 +11,9 @@ from pathlib import Path
 class LLMConfig:
     backend: str = "ollama"
     base_url: str = "http://localhost:11434"
-    model: str = "gemma3:12b"
+    model: str = "translategemma:4b"
+    # "auto" ならモデル名から決める。"chat" / "translategemma" / "lfm2"
+    style: str = "auto"
     temperature: float = 0.2
     timeout_seconds: float = 120.0
 

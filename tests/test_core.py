@@ -7,7 +7,7 @@ from readytrans.cache import TranslationCache
 from readytrans.config import LLMConfig, Profile, load_config
 from readytrans.hotkey import MOD_CONTROL, MOD_SHIFT, parse_hotkey
 from readytrans.layout import TextBlock, group_lines
-from readytrans.translator import Translator, build_system_prompt, parse_translations
+from readytrans.translator import Translator, build_system_prompt, detect_style
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,70 +26,88 @@ def test_group_lines_merges_paragraph_and_keeps_columns_apart():
     assert (para.x, para.y, para.w, para.h) == (10, 10, 120, 44)
 
 
-def test_parse_translations():
-    assert parse_translations('{"translations": ["a", "b"]}', 2) == ["a", "b"]
-    assert parse_translations('```json\n["a"]\n```', 1) == ["a"]
-    assert parse_translations('{"translations": ["a"]}', 2) is None
-    assert parse_translations("no json", 1) is None
-
-
 def test_glossary_in_prompt():
     prompt = build_system_prompt(Profile(glossary={"Raid": "レイド", "Active Matter": ""}))
     assert "Raid → レイド" in prompt
     assert "Active Matter → 英語のまま残す" in prompt
 
 
-def _translator(handler, tmp_path, backend="ollama"):
-    t = Translator(LLMConfig(backend=backend), Profile(), TranslationCache(tmp_path / "c.db"))
+def _translator(handler, tmp_path, backend="ollama", model="gemma4:12b"):
+    t = Translator(LLMConfig(backend=backend, model=model), Profile(), TranslationCache(tmp_path / "c.db"))
     t.client = httpx.Client(transport=httpx.MockTransport(handler))
     return t
 
 
-def test_translate_uses_cache_and_ollama(tmp_path):
-    calls = []
+def _ollama_stream(text):
+    lines = [{"message": {"content": ch}, "done": False} for ch in text]
+    lines.append({"message": {"content": ""}, "done": True, "done_reason": "stop"})
+    return httpx.Response(200, content="\n".join(json.dumps(l, ensure_ascii=False) for l in lines))
+
+
+def test_translate_streams_each_paragraph_and_caches(tmp_path):
+    asked = []
 
     def handler(request):
         body = json.loads(request.content)
-        texts = json.loads(body["messages"][-1]["content"])
-        calls.append(texts)
-        out = [f"訳:{x}" for x in texts]
-        return httpx.Response(200, json={"message": {"content": json.dumps({"translations": out})}})
+        assert body["stream"] is True and body["think"] is False
+        user = body["messages"][-1]["content"]
+        asked.append(user)
+        return _ollama_stream(f"「訳:{user}」")
 
     t = _translator(handler, tmp_path)
     assert t.translate(["Hello", "World"]) == ["訳:Hello", "訳:World"]
-    assert t.translate(["World", "New"]) == ["訳:World", "訳:New"]
-    assert calls == [["Hello", "World"], ["New"]]
+    assert list(t.translate_iter(["World", "New"])) == [(0, "訳:World"), (1, "訳:New")]
+    assert asked == ["Hello", "World", "New"]
 
 
-def _single_or_batch(request, batch_out):
-    body = json.loads(request.content)
-    user = body["messages"][-1]["content"]
-    if user.startswith("["):
-        return batch_out(json.loads(user))
-    return f"「訳:{user}」"
-
-
-def test_translate_falls_back_to_one_by_one(tmp_path):
-    def handler(request):
-        content = _single_or_batch(request, lambda texts: json.dumps(["まとめ"]))
-        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
-
-    t = _translator(handler, tmp_path, backend="openai")
-    assert t.translate(["A", "B"]) == ["訳:A", "訳:B"]
-
-
-def test_empty_translation_is_retried_and_not_cached(tmp_path):
-    calls = []
+def test_empty_translation_is_not_cached(tmp_path):
+    replies = iter(["", "訳"])
 
     def handler(request):
-        calls.append(1)
-        content = _single_or_batch(request, lambda texts: json.dumps({"translations": [""] * len(texts)}))
-        return httpx.Response(200, json={"message": {"content": content}})
+        return _ollama_stream(next(replies))
 
     t = _translator(handler, tmp_path)
-    assert t.translate(["Gameplay and Balance"]) == ["訳:Gameplay and Balance"]
-    t.cache.put(t._cache_key(), "Old", "")  # 以前の版で保存された空の訳は無視する
-    assert t.translate(["Old"]) == ["訳:Old"]
+    assert t.translate(["A"]) == [""]
+    assert t.translate(["A"]) == ["訳"]
+
+
+def test_openai_streaming(tmp_path):
+    def handler(request):
+        chunks = [{"choices": [{"delta": {"content": c}}]} for c in ["訳", ":A"]]
+        sse = "".join(f"data: {json.dumps(c, ensure_ascii=False)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+        return httpx.Response(200, content=sse)
+
+    t = _translator(handler, tmp_path, backend="openai")
+    assert t.translate(["A"]) == ["訳:A"]
+
+
+def test_think_is_dropped_if_unsupported(tmp_path):
+    bodies = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "think" in body:
+            return httpx.Response(400, json={"error": '"x" does not support thinking'})
+        return _ollama_stream("訳")
+
+    t = _translator(handler, tmp_path)
+    assert t.translate(["A", "B"]) == ["訳", "訳"]
+    assert "think" in bodies[0] and all("think" not in b for b in bodies[1:])
+
+
+def test_translategemma_uses_its_own_prompt(tmp_path):
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content)["messages"])
+        return _ollama_stream("こんにちは")
+
+    t = _translator(handler, tmp_path, model="translategemma:4b")
+    assert t.translate(["Hello"]) == ["こんにちは"]
+    (msg,) = seen[0]
+    assert msg["role"] == "user" and msg["content"].endswith("into Japanese:\n\n\nHello")
+    assert detect_style("hf.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF") == "lfm2"
 
 
 def test_parse_hotkey():
@@ -99,26 +117,10 @@ def test_parse_hotkey():
 
 def test_example_config_and_profiles_load():
     cfg = load_config(ROOT)
-    assert cfg.llm.model.startswith("gemma")
+    assert cfg.llm.model.startswith("translategemma")
     for path in (ROOT / "profiles").glob("*.toml"):
         load_config  # noqa
         from readytrans.config import load_profile
 
         assert load_profile(ROOT / "profiles", path.stem).name
 
-
-def test_think_is_disabled_and_dropped_if_unsupported(tmp_path):
-    bodies = []
-
-    def handler(request):
-        body = json.loads(request.content)
-        bodies.append(body)
-        if "think" in body:
-            return httpx.Response(400, json={"error": '"x" does not support thinking'})
-        return httpx.Response(200, json={"message": {"content": json.dumps({"translations": ["訳"]})}})
-
-    t = _translator(handler, tmp_path)
-    assert t.translate(["A"]) == ["訳"]
-    assert bodies[0]["think"] is False and "think" not in bodies[1]
-    t.translate(["B"])
-    assert "think" not in bodies[2]
