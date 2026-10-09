@@ -63,6 +63,7 @@ class Translator:
         self.cache = cache
         self.system_prompt = build_system_prompt(profile)
         self.single_prompt = build_system_prompt(profile, SINGLE_PROMPT)
+        self._think_off = True
         # 接続はすぐ失敗させ、返事（生成）だけ長めに待つ
         self.client = httpx.Client(timeout=httpx.Timeout(llm.timeout_seconds, connect=5.0))
 
@@ -150,9 +151,23 @@ class Translator:
                     "properties": {"translations": {"type": "array", "items": {"type": "string"}}},
                     "required": ["translations"],
                 }
+            if self._think_off:
+                # Gemma 4 など考えるモードを持つモデルは、考える分だけ遅くなり、
+                # 出力の上限を使い切って訳が空になることがあるので切る
+                body["think"] = False
             resp = self.client.post(f"{base}/api/chat", json=body)
+            if resp.status_code == 400 and "think" in resp.text and self._think_off:
+                log.info("このモデルは think の指定に対応していないので外します")
+                self._think_off = False
+                body.pop("think")
+                resp = self.client.post(f"{base}/api/chat", json=body)
             resp.raise_for_status()
-            return resp.json()["message"]["content"]
+            data = resp.json()
+            if data.get("done_reason") == "length":
+                log.warning("AIの返事が長さの上限で打ち切られました")
+            if data.get("message", {}).get("thinking"):
+                log.info("AIが考えるモードで返事をしました（%d 文字）", len(data["message"]["thinking"]))
+            return data["message"]["content"]
 
         resp = self.client.post(
             f"{base}/v1/chat/completions",

@@ -105,3 +105,20 @@ def test_example_config_and_profiles_load():
         from readytrans.config import load_profile
 
         assert load_profile(ROOT / "profiles", path.stem).name
+
+
+def test_think_is_disabled_and_dropped_if_unsupported(tmp_path):
+    bodies = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "think" in body:
+            return httpx.Response(400, json={"error": '"x" does not support thinking'})
+        return httpx.Response(200, json={"message": {"content": json.dumps({"translations": ["訳"]})}})
+
+    t = _translator(handler, tmp_path)
+    assert t.translate(["A"]) == ["訳"]
+    assert bodies[0]["think"] is False and "think" not in bodies[1]
+    t.translate(["B"])
+    assert "think" not in bodies[2]
