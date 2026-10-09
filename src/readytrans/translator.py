@@ -129,6 +129,11 @@ class Translator:
                         progress(msg)
                 if data.get("status") == "success":
                     break
+        # 層ごとの進み具合の区切りによっては 100% の行が出ないので、最後に必ず出す
+        total = sum(totals.values())
+        msg = f"翻訳モデル {self.llm.model} をダウンロード中… 100%（{total / 2**30:.1f} / {total / 2**30:.1f} GB）"
+        log.info("%s", msg)
+        progress(msg)
         log.info("%s のダウンロードが終わりました", self.llm.model)
         return True
 

@@ -208,9 +208,9 @@ class App(QObject):
 
     def _warmup(self) -> None:
         translator = self.pipeline.translator
+        downloaded = False
         try:
-            if translator.ensure_model(self._set_preparing):
-                self.bridge.notify.emit(f"翻訳モデル {self.cfg.llm.model} のダウンロードが終わりました")
+            downloaded = translator.ensure_model(self._set_preparing)
         except Exception as e:
             log.warning("翻訳モデルの確認・ダウンロードに失敗しました: %s", e)
             self.bridge.notify.emit(f"翻訳モデルを用意できませんでした: {e}")
@@ -218,6 +218,8 @@ class App(QObject):
         try:
             translator.warmup()
             log.info("翻訳モデル %s を読み込みました", self.cfg.llm.model)
+            if downloaded:
+                self.bridge.notify.emit("翻訳の準備ができました")
         except Exception as e:
             log.warning("翻訳モデルの事前読み込みに失敗しました: %s", e)
         self.preparing = None
