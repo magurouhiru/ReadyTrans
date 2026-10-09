@@ -56,7 +56,7 @@ class Bridge(QObject):
 
     hotkey = Signal(str)
     done = Signal(object, object, object)  # region, blocks, translations
-    unchanged = Signal()
+    status = Signal(object, str)
     failed = Signal(object, str)
 
 
@@ -71,6 +71,7 @@ class App:
         self.bridge.hotkey.connect(self.on_hotkey)
         self.bridge.done.connect(self.on_done)
         self.bridge.failed.connect(self.on_failed)
+        self.bridge.status.connect(self.overlay_status)
 
         self.overlay = TranslationOverlay(self.cfg.overlay)
         self.selector = RegionSelector()
@@ -81,6 +82,7 @@ class App:
 
         self.pipeline = Pipeline(self.cfg, base_dir)
         self.executor = ThreadPoolExecutor(max_workers=1)
+        self.executor.submit(self._warmup)
         self.busy = False
         self.region: Region | None = None
         self.last_text: str | None = None
@@ -175,12 +177,28 @@ class App:
         self.last_text = text
         if not blocks:
             return region, [], []
+        if force:
+            self.bridge.status.emit(region, "翻訳中…")
         return region, blocks, self.pipeline.translate(blocks)
+
+    def _warmup(self) -> None:
+        try:
+            self.pipeline.translator.warmup()
+            log.info("翻訳モデル %s を読み込みました", self.cfg.llm.model)
+        except Exception as e:
+            log.warning("翻訳モデルの事前読み込みに失敗しました: %s", e)
+
+    def overlay_status(self, region: Region, text: str) -> None:
+        self.overlay.show_status(region, text)
 
     def _finish(self, future: Future) -> None:
         self.busy = False
         try:
             result = future.result()
+        except TimeoutError as e:
+            log.error("%s", e)
+            self.bridge.failed.emit(self.region, str(e))
+            return
         except Exception as e:
             log.exception("処理に失敗しました")
             self.bridge.failed.emit(self.region, str(e))

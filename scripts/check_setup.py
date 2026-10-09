@@ -23,6 +23,17 @@ try:
     for en, ja in zip(samples, t.translate(samples)):
         print(f"  {en}\n  → {ja}")
     print(f"[OK] 翻訳できました（{time.perf_counter() - start:.1f} 秒）")
+    if cfg.llm.backend == "ollama":
+        # モデルがどれだけ GPU に載っているか（CPU に溢れていると極端に遅くなる）
+        import httpx
+
+        ps = httpx.get(cfg.llm.base_url.rstrip("/") + "/api/ps", timeout=5).json()
+        for m in ps.get("models", []):
+            size, vram = m.get("size", 0), m.get("size_vram", 0)
+            ratio = vram / size * 100 if size else 0
+            print(f"     {m.get('name')}: {size / 2**30:.1f} GB 中 {ratio:.0f}% が GPU 上")
+            if ratio < 100:
+                print("     一部が CPU で動いています。ゲーム中はさらに遅くなるので、小さいモデルを検討してください。")
 except Exception as e:
     ok = False
     print(f"[NG] 翻訳AIにつながりません: {e}")

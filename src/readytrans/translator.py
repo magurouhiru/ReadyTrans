@@ -52,7 +52,15 @@ class Translator:
         self.profile = profile
         self.cache = cache
         self.system_prompt = build_system_prompt(profile)
-        self.client = httpx.Client(timeout=llm.timeout_seconds)
+        # 接続はすぐ失敗させ、返事（生成）だけ長めに待つ
+        self.client = httpx.Client(timeout=httpx.Timeout(llm.timeout_seconds, connect=5.0))
+
+    def warmup(self) -> None:
+        """モデルを先にメモリへ読み込んでおく（最初の翻訳が遅くならないように）。"""
+        if self.llm.backend != "ollama":
+            return
+        base = self.llm.base_url.rstrip("/")
+        self.client.post(f"{base}/api/generate", json={"model": self.llm.model, "keep_alive": "30m"})
 
     def translate(self, texts: list[str]) -> list[str]:
         results: list[str | None] = [None] * len(texts)
@@ -90,6 +98,17 @@ class Translator:
         return parsed[0] if parsed else content.strip()
 
     def _chat(self, user: str, count: int) -> str:
+        try:
+            return self._chat_raw(user, count)
+        except httpx.TimeoutException as e:
+            raise TimeoutError(
+                f"翻訳AIが {self.llm.timeout_seconds:.0f} 秒以内に返事をしませんでした。"
+                "ゲームと AI で VRAM が足りていない可能性があります（`ollama ps` で確認できます）。"
+            ) from e
+
+    def _chat_raw(self, user: str, count: int) -> str:
+        # 返事が終わらなくなる（空白を出し続ける等）のを防ぐため、出力の長さに上限をつける
+        max_tokens = 64 + len(user) * 3
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user},
@@ -115,7 +134,7 @@ class Translator:
                     "messages": messages,
                     "stream": False,
                     "format": schema,
-                    "options": {"temperature": self.llm.temperature},
+                    "options": {"temperature": self.llm.temperature, "num_predict": max_tokens},
                     "keep_alive": "30m",
                 },
             )
@@ -128,6 +147,7 @@ class Translator:
                 "model": self.llm.model,
                 "messages": messages,
                 "temperature": self.llm.temperature,
+                "max_tokens": max_tokens,
             },
         )
         resp.raise_for_status()

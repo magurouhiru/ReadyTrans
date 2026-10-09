@@ -13,7 +13,7 @@ class LLMConfig:
     base_url: str = "http://localhost:11434"
     model: str = "gemma3:12b"
     temperature: float = 0.2
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 120.0
 
 
 @dataclass

@@ -10,7 +10,8 @@ base_url = "http://localhost:11434"
 # VRAM の目安: gemma3:4b → 6GB, gemma3:12b → 12GB, gemma3:27b → 20GB 以上
 model = "gemma3:12b"
 temperature = 0.2
-timeout_seconds = 60
+# 返事を待つ最大秒数。ゲーム中は GPU を取り合うので長めに
+timeout_seconds = 120
 
 [ocr]
 # 英語 OCR の言語タグ。Windows の「言語の設定」で英語の OCR 機能が必要です
