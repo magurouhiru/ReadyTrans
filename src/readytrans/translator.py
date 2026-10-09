@@ -21,8 +21,15 @@ SYSTEM_PROMPT = """\
 - 訳文以外の説明は書かないでください。"""
 
 
-def build_system_prompt(profile: Profile) -> str:
-    parts = [SYSTEM_PROMPT]
+SINGLE_PROMPT = """\
+あなたはゲームの翻訳者です。ゲーム画面から OCR で読み取った英語を自然な日本語に訳します。
+- 訳文だけを1行で返してください。説明や引用符は付けないでください。
+- OCR の読み間違いらしい文字は文脈から推測して直してから訳してください。
+- 数字、記号、キー表記（[E]、LMB など）はそのまま残してください。"""
+
+
+def build_system_prompt(profile: Profile, base: str = SYSTEM_PROMPT) -> str:
+    parts = [base]
     if profile.instructions:
         parts.append("\nゲーム固有の指示:\n" + profile.instructions)
     if profile.glossary:
@@ -55,6 +62,7 @@ class Translator:
         self.profile = profile
         self.cache = cache
         self.system_prompt = build_system_prompt(profile)
+        self.single_prompt = build_system_prompt(profile, SINGLE_PROMPT)
         # 接続はすぐ失敗させ、返事（生成）だけ長めに待つ
         self.client = httpx.Client(timeout=httpx.Timeout(llm.timeout_seconds, connect=5.0))
 
@@ -70,20 +78,22 @@ class Translator:
         todo: list[int] = []
         for i, text in enumerate(texts):
             cached = self.cache.get(self._cache_key(), text) if self.cache else None
-            if cached is not None:
+            if cached:
                 results[i] = cached
             else:
                 todo.append(i)
+        if len(todo) < len(texts):
+            log.info("キャッシュから %d 件", len(texts) - len(todo))
 
         if todo:
             batch = [texts[i] for i in todo]
             translated = self._translate_batch(batch)
             if translated is None:
-                # まとめて訳すと個数がずれることがあるので、1件ずつ訳し直す
+                # まとめて訳すと個数がずれたり空になったりすることがあるので、1件ずつ訳し直す
                 translated = [self._translate_one(t) for t in batch]
             for i, ja in zip(todo, translated):
                 results[i] = ja
-                if self.cache:
+                if self.cache and ja:
                     self.cache.put(self._cache_key(), texts[i], ja)
 
         return [r or "" for r in results]
@@ -92,58 +102,55 @@ class Translator:
         return f"{self.llm.model}|{self.profile.key}"
 
     def _translate_batch(self, texts: list[str]) -> list[str] | None:
-        content = self._chat(json.dumps(texts, ensure_ascii=False), len(texts))
+        user = json.dumps(texts, ensure_ascii=False)
+        content = self._chat(self.system_prompt, user, json_schema=True)
+        log.info("AIの返事: %r", content[:500])
         parsed = parse_translations(content, len(texts))
         if parsed is None:
-            log.warning("翻訳AIの返事を読み取れませんでした。1件ずつ訳し直します。返事: %r", content[:500])
+            log.warning("AIの返事の形式が違うので、1件ずつ訳し直します")
+            return None
+        if any(src.strip() and not ja.strip() for src, ja in zip(texts, parsed)):
+            log.warning("空の訳が返ってきたので、1件ずつ訳し直します")
+            return None
         return parsed
 
     def _translate_one(self, text: str) -> str:
-        content = self._chat(json.dumps([text], ensure_ascii=False), 1)
-        parsed = parse_translations(content, 1)
-        return parsed[0] if parsed else content.strip()
+        content = self._chat(self.single_prompt, text, json_schema=False)
+        log.info("AIの返事（1件）: %r", content[:500])
+        return content.strip().strip('"「」').strip()
 
-    def _chat(self, user: str, count: int) -> str:
+    def _chat(self, system: str, user: str, json_schema: bool) -> str:
         try:
-            return self._chat_raw(user, count)
+            return self._chat_raw(system, user, json_schema)
         except httpx.TimeoutException as e:
             raise TimeoutError(
                 f"翻訳AIが {self.llm.timeout_seconds:.0f} 秒以内に返事をしませんでした。"
                 "ゲームと AI で VRAM が足りていない可能性があります（`ollama ps` で確認できます）。"
             ) from e
 
-    def _chat_raw(self, user: str, count: int) -> str:
+    def _chat_raw(self, system: str, user: str, json_schema: bool) -> str:
         # 返事が終わらなくなる（空白を出し続ける等）のを防ぐため、出力の長さに上限をつける
-        max_tokens = 64 + len(user) * 3
+        max_tokens = 128 + len(user) * 4
         messages = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
         base = self.llm.base_url.rstrip("/")
         if self.llm.backend == "ollama":
-            schema = {
-                "type": "object",
-                "properties": {
-                    "translations": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "minItems": count,
-                        "maxItems": count,
-                    }
-                },
-                "required": ["translations"],
+            body = {
+                "model": self.llm.model,
+                "messages": messages,
+                "stream": False,
+                "options": {"temperature": self.llm.temperature, "num_predict": max_tokens},
+                "keep_alive": "30m",
             }
-            resp = self.client.post(
-                f"{base}/api/chat",
-                json={
-                    "model": self.llm.model,
-                    "messages": messages,
-                    "stream": False,
-                    "format": schema,
-                    "options": {"temperature": self.llm.temperature, "num_predict": max_tokens},
-                    "keep_alive": "30m",
-                },
-            )
+            if json_schema:
+                body["format"] = {
+                    "type": "object",
+                    "properties": {"translations": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["translations"],
+                }
+            resp = self.client.post(f"{base}/api/chat", json=body)
             resp.raise_for_status()
             return resp.json()["message"]["content"]
 

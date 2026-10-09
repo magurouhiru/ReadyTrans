@@ -61,14 +61,35 @@ def test_translate_uses_cache_and_ollama(tmp_path):
     assert calls == [["Hello", "World"], ["New"]]
 
 
+def _single_or_batch(request, batch_out):
+    body = json.loads(request.content)
+    user = body["messages"][-1]["content"]
+    if user.startswith("["):
+        return batch_out(json.loads(user))
+    return f"「訳:{user}」"
+
+
 def test_translate_falls_back_to_one_by_one(tmp_path):
     def handler(request):
-        texts = json.loads(json.loads(request.content)["messages"][-1]["content"])
-        out = ["まとめ"] if len(texts) > 1 else [f"訳:{texts[0]}"]
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(out)}}]})
+        content = _single_or_batch(request, lambda texts: json.dumps(["まとめ"]))
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
     t = _translator(handler, tmp_path, backend="openai")
     assert t.translate(["A", "B"]) == ["訳:A", "訳:B"]
+
+
+def test_empty_translation_is_retried_and_not_cached(tmp_path):
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        content = _single_or_batch(request, lambda texts: json.dumps({"translations": [""] * len(texts)}))
+        return httpx.Response(200, json={"message": {"content": content}})
+
+    t = _translator(handler, tmp_path)
+    assert t.translate(["Gameplay and Balance"]) == ["訳:Gameplay and Balance"]
+    t.cache.put(t._cache_key(), "Old", "")  # 以前の版で保存された空の訳は無視する
+    assert t.translate(["Old"]) == ["訳:Old"]
 
 
 def test_parse_hotkey():
