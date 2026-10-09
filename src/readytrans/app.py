@@ -67,6 +67,7 @@ class Bridge(QObject):
     hotkey = Signal(str)
     done = Signal(object, object, object)  # region, blocks, translations
     status = Signal(object, str)
+    notify = Signal(str)
     failed = Signal(object, str)
 
 
@@ -85,6 +86,7 @@ class App(QObject):
         self.bridge.done.connect(self.on_done)
         self.bridge.failed.connect(self.on_failed)
         self.bridge.status.connect(self.overlay_status)
+        self.bridge.notify.connect(self.on_notify)
 
         self.overlay = TranslationOverlay(self.cfg.overlay)
         self.selector = RegionSelector()
@@ -97,6 +99,7 @@ class App(QObject):
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.executor.submit(self._warmup)
         self.busy = False
+        self.preparing: str | None = "翻訳モデルを準備中…"
         self.region: Region | None = None
         self.last_text: str | None = None
 
@@ -174,6 +177,11 @@ class App(QObject):
     # --- 処理 ---
 
     def run(self, region: Region, force: bool) -> None:
+        if self.preparing:
+            # モデルのダウンロード・読み込みが終わるまでは進み具合だけ見せる
+            if force:
+                self.overlay.show_status(region, self.preparing)
+            return
         if self.busy:
             return
         self.busy = True
@@ -199,11 +207,27 @@ class App(QObject):
         return None
 
     def _warmup(self) -> None:
+        translator = self.pipeline.translator
         try:
-            self.pipeline.translator.warmup()
+            if translator.ensure_model(self._set_preparing):
+                self.bridge.notify.emit(f"翻訳モデル {self.cfg.llm.model} のダウンロードが終わりました")
+        except Exception as e:
+            log.warning("翻訳モデルの確認・ダウンロードに失敗しました: %s", e)
+            self.bridge.notify.emit(f"翻訳モデルを用意できませんでした: {e}")
+        try:
+            translator.warmup()
             log.info("翻訳モデル %s を読み込みました", self.cfg.llm.model)
         except Exception as e:
             log.warning("翻訳モデルの事前読み込みに失敗しました: %s", e)
+        self.preparing = None
+
+    def _set_preparing(self, message: str) -> None:
+        if self.preparing is not None and "ダウンロード中" not in self.preparing:
+            self.bridge.notify.emit(message)  # ダウンロード開始を一度だけ通知する
+        self.preparing = message
+
+    def on_notify(self, message: str) -> None:
+        self.tray.showMessage("ReadyTrans", message)
 
     def overlay_status(self, region: Region, text: str) -> None:
         self.overlay.show_status(region, text)

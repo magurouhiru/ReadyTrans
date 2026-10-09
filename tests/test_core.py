@@ -7,7 +7,7 @@ from readytrans.cache import TranslationCache
 from readytrans.config import LLMConfig, Profile, load_config
 from readytrans.hotkey import MOD_CONTROL, MOD_SHIFT, parse_hotkey
 from readytrans.layout import TextBlock, group_lines
-from readytrans.translator import Translator, build_system_prompt, detect_style
+from readytrans.translator import Translator, build_system_prompt, detect_style, normalize_model_name
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -124,3 +124,25 @@ def test_example_config_and_profiles_load():
 
         assert load_profile(ROOT / "profiles", path.stem).name
 
+
+
+def test_ensure_model_pulls_only_when_missing(tmp_path):
+    pulled = []
+    installed = [{"name": "gemma4:12b"}]
+
+    def handler(request):
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": installed})
+        pulled.append(json.loads(request.content)["model"])
+        lines = [{"status": "pulling", "total": 100, "completed": c} for c in (0, 50, 100)] + [{"status": "success"}]
+        return httpx.Response(200, content="\n".join(json.dumps(l) for l in lines))
+
+    t = _translator(handler, tmp_path, model="translategemma:4b")
+    messages = []
+    assert t.ensure_model(messages.append) is True
+    assert pulled == ["translategemma:4b"] and messages[-1].endswith("100%（0.0 GB）")
+
+    installed.append({"name": "translategemma:4b"})
+    assert t.ensure_model() is False and len(pulled) == 1
+    assert normalize_model_name("translategemma") == "translategemma:latest"
+    assert normalize_model_name("hf.co/x/LFM2-ENJP:Q4") == "hf.co/x/LFM2-ENJP:Q4"

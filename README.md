@@ -18,25 +18,22 @@
 ## セットアップ
 
 ```powershell
-# 1. 翻訳モデルを取得（翻訳専用の TranslateGemma、約3GB）
-ollama pull translategemma:4b
-
-# 2. このリポジトリを取得して依存関係を入れる
+# 1. このリポジトリを取得して依存関係を入れる
 git clone https://github.com/magurouhiru/ReadyTrans.git
 cd ReadyTrans
 uv sync
 
-# 3. 設定ファイルを作る（モデル名やプロファイルを編集）
+# 2. 設定ファイルを作る（モデル名やプロファイルを編集）
 copy config.example.toml config.toml
 
-# 4. 翻訳と OCR が動くか確認
+# 3. 翻訳と OCR が動くか確認
 uv run python scripts/check_setup.py
 
-# 5. 起動
+# 4. 起動
 uv run readytrans
 ```
 
-起動するとタスクトレイに青いアイコンが出ます。
+起動するとタスクトレイに青いアイコンが出ます。設定のモデルが Ollama に無ければ自動でダウンロードします（translategemma:4b は約3GB、進み具合はログとトレイの通知に出ます）。
 
 ## 使い方
 

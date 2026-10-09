@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import httpx
 
@@ -48,6 +48,11 @@ Please translate the following English text into Japanese:
 """
 
 
+def normalize_model_name(name: str) -> str:
+    """タグ省略時は :latest として比べる（Ollama の扱いに合わせる）。"""
+    return name if ":" in name.split("/")[-1] else f"{name}:latest"
+
+
 def detect_style(model: str) -> str:
     """モデル名から問い合わせ方を決める。翻訳専用モデルは決まった書式でないとうまく訳せない。"""
     name = model.lower()
@@ -73,6 +78,49 @@ class Translator:
         log.info("翻訳モデル %s（問い合わせ方: %s）", llm.model, self.style)
         # timeout は「次のデータが届くまで」の待ち時間。ストリーミングなので書き続けている限り切れない
         self.client = httpx.Client(timeout=httpx.Timeout(llm.timeout_seconds, connect=5.0))
+
+    def installed_models(self) -> set[str]:
+        base = self.llm.base_url.rstrip("/")
+        resp = self.client.get(f"{base}/api/tags")
+        resp.raise_for_status()
+        return {normalize_model_name(m["name"]) for m in resp.json().get("models", [])}
+
+    def ensure_model(self, progress: Callable[[str], None] = lambda _: None) -> bool:
+        """設定のモデルが Ollama に無ければダウンロードする。ダウンロードしたら True。"""
+        if self.llm.backend != "ollama":
+            return False
+        installed = self.installed_models()
+        log.info("Ollama にあるモデル: %s", ", ".join(sorted(installed)) or "なし")
+        if normalize_model_name(self.llm.model) in installed:
+            return False
+
+        log.info("%s が無いのでダウンロードします", self.llm.model)
+        progress(f"翻訳モデル {self.llm.model} をダウンロード中…")
+        base = self.llm.base_url.rstrip("/")
+        last_shown = -10
+        # ダウンロードは時間がかかるので、データが届く間隔だけで時間切れを判断する
+        with self.client.stream(
+            "POST", f"{base}/api/pull", json={"model": self.llm.model, "stream": True}, timeout=httpx.Timeout(300.0, connect=5.0)
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                data = json.loads(line)
+                if "error" in data:
+                    raise RuntimeError(f"モデルのダウンロードに失敗しました: {data['error']}")
+                total, done = data.get("total"), data.get("completed")
+                if total and done is not None:
+                    pct = int(done / total * 100)
+                    if pct >= last_shown + 10 or pct == 100:
+                        last_shown = pct
+                        msg = f"翻訳モデル {self.llm.model} をダウンロード中… {pct}%（{total / 2**30:.1f} GB）"
+                        log.info("%s", msg)
+                        progress(msg)
+                if data.get("status") == "success":
+                    break
+        log.info("%s のダウンロードが終わりました", self.llm.model)
+        return True
 
     def warmup(self) -> None:
         """モデルを先にメモリへ読み込んでおく（最初の翻訳が遅くならないように）。"""

@@ -18,6 +18,7 @@ print(f"プロファイル: {cfg.profile.name} / モデル: {cfg.llm.model} ({cf
 ok = True
 try:
     t = Translator(cfg.llm, cfg.profile)
+    t.ensure_model(print)  # 無ければダウンロードする
     samples = ["Press [E] to open the stash.", "Extraction point is closing in 30 seconds! Get to the evac zone before the storm hits."]
     start = time.perf_counter()
     for en, ja in zip(samples, t.translate(samples)):
