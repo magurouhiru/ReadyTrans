@@ -114,7 +114,7 @@ powershell -ExecutionPolicy Bypass -File packaging/build.ps1
 dist/ReadyTrans.exe --self-test   # OCR などが exe に正しく入っているかを確認（結果は dist/selftest.log）
 ```
 
-main に push すると GitHub Actions が exe を作り、`v0.1.0` のようなタグを push すると Releases に載せます。
+main に push すると GitHub Actions が exe を作り、`v0.1.0` のようなタグを push するか、Actions の「Build」を手動実行して `release_tag` を入れると Releases に載せます。
 
 | ファイル | 役割 |
 |---|---|
