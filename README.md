@@ -11,11 +11,23 @@
 ## 必要なもの
 
 - Windows 10（2004 以降）または Windows 11
-- [Ollama](https://ollama.com/)
+- [Ollama](https://ollama.com/)（Windows 版をインストールするか、下の Docker で動かします）
 - [uv](https://docs.astral.sh/uv/)（Python の実行環境をまとめて用意してくれるツール）
 - Windows の英語 OCR（「設定 > 時刻と言語 > 言語と地域」で英語を追加すると入ります）
 
 ## セットアップ
+
+### Ollama を Docker で動かす場合
+
+Docker Desktop（NVIDIA の GPU を使う設定）が入っていれば、次のコマンドで Ollama を起動できます。
+
+```powershell
+docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+```
+
+ダウンロードしたモデルは `ollama` ボリュームに保存されるので、コンテナを作り直しても残ります。2回目以降は `docker start ollama` で起動できます。`config.toml` の `base_url` は既定の `http://localhost:11434` のままで大丈夫です。
+
+### ReadyTrans
 
 ```powershell
 # 1. このリポジトリを取得して依存関係を入れる
