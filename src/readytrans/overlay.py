@@ -19,17 +19,17 @@ class Item:
 
 
 def _overlay_flags() -> Qt.WindowType:
-    return (
-        Qt.WindowType.FramelessWindowHint
-        | Qt.WindowType.WindowStaysOnTopHint
-        | Qt.WindowType.Tool
-        | Qt.WindowType.WindowDoesNotAcceptFocus
-    )
+    return Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
 
 
 class TranslationOverlay(QWidget):
     def __init__(self, cfg: OverlayConfig):
-        super().__init__(None, _overlay_flags() | Qt.WindowType.WindowTransparentForInput)
+        super().__init__(
+            None,
+            _overlay_flags()
+            | Qt.WindowType.WindowTransparentForInput
+            | Qt.WindowType.WindowDoesNotAcceptFocus,
+        )
         self.cfg = cfg
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)

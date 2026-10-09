@@ -29,11 +29,7 @@ class WindowsOCR:
         return asyncio.run(self._recognize(image))
 
     async def _recognize(self, image: np.ndarray) -> list[TextBlock]:
-        from winrt.windows.graphics.imaging import (
-            BitmapAlphaMode,
-            BitmapPixelFormat,
-            SoftwareBitmap,
-        )
+        from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
         from winrt.windows.media.ocr import OcrEngine
         from winrt.windows.storage.streams import DataWriter
 
@@ -42,7 +38,7 @@ class WindowsOCR:
         limit = OcrEngine.max_image_dimension
         scale = min(scale, limit / max(h, w))
         if scale != 1.0:
-            pil = Image.fromarray(image, "RGBA")  # BGRA のまま並びを保って拡大する
+            pil = Image.fromarray(np.ascontiguousarray(image))  # BGRA のまま並びを保って拡大する
             pil = pil.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
             image = np.asarray(pil)
         h2, w2 = image.shape[:2]
@@ -50,7 +46,7 @@ class WindowsOCR:
         writer = DataWriter()
         writer.write_bytes(np.ascontiguousarray(image, dtype=np.uint8).tobytes())
         bitmap = SoftwareBitmap.create_copy_from_buffer(
-            writer.detach_buffer(), BitmapPixelFormat.BGRA8, w2, h2, BitmapAlphaMode.PREMULTIPLIED
+            writer.detach_buffer(), BitmapPixelFormat.BGRA8, w2, h2
         )
         result = await self._engine.recognize_async(bitmap)
 
