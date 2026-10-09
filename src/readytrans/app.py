@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import shutil
 import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -295,12 +296,59 @@ class App(QObject):
         return self.qt.exec()
 
 
+def resources_dir() -> Path:
+    """同梱の設定ひな形やプロファイルの場所。exe の場合は展開先の一時フォルダ。"""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).resolve().parents[2]
+
+
+def prepare_base_dir() -> Path:
+    """設定・キャッシュ・ログを置くフォルダ。exe ならその隣、開発中はカレントフォルダ。
+
+    exe を初めて起動したときは、編集できるように config.toml と profiles/ を隣に作る。
+    """
+    if not getattr(sys, "frozen", False):
+        return Path.cwd()
+    base_dir = Path(sys.executable).parent
+    res = resources_dir()
+    if not (base_dir / "config.toml").exists():
+        shutil.copyfile(res / "config.example.toml", base_dir / "config.toml")
+    profiles = base_dir / "profiles"
+    profiles.mkdir(exist_ok=True)
+    for src in (res / "profiles").glob("*.toml"):
+        if not (profiles / src.name).exists():
+            shutil.copyfile(src, profiles / src.name)
+    return base_dir
+
+
+def setup_logging(base_dir: Path) -> None:
+    handlers: list[logging.Handler] = [logging.FileHandler(base_dir / "readytrans.log", "w", encoding="utf-8")]
+    if sys.stderr is not None:  # exe（ウィンドウなし）では標準エラーが無い
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", handlers=handlers)
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if sys.platform != "win32":
         sys.exit("ReadyTrans は Windows 専用です。")
-    base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
-    sys.exit(App(base_dir).exec())
+    base_dir = prepare_base_dir()
+    setup_logging(base_dir)
+    if "--self-test" in sys.argv:
+        from .selftest import run
+
+        sys.exit(run(base_dir))
+    try:
+        app = App(base_dir)
+    except Exception as e:
+        # exe ではコンソールが無いので、起動できない理由をダイアログで見せる
+        log.exception("起動に失敗しました")
+        from PySide6.QtWidgets import QMessageBox
+
+        QApplication.instance() or QApplication(sys.argv)
+        QMessageBox.critical(None, "ReadyTrans", f"起動できませんでした:\n{e}\n\n詳しくは {base_dir / 'readytrans.log'} を見てください。")
+        sys.exit(1)
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ readytrans = "readytrans.app:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
+build = ["pyinstaller>=6.11"]
 
 [build-system]
 requires = ["hatchling"]

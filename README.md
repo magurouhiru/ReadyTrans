@@ -8,6 +8,14 @@
 
 > まだ試作段階です。
 
+## ダウンロードして使う（かんたん）
+
+1. [Releases](https://github.com/magurouhiru/ReadyTrans/releases) から `ReadyTrans.exe` をダウンロードして、好きなフォルダに置く
+2. Ollama を起動しておく（下の「必要なもの」を参照）
+3. `ReadyTrans.exe` を起動する
+
+初回起動時に、exe と同じフォルダに `config.toml`（設定）と `profiles/`（ゲームごとの用語集）が作られます。翻訳モデルが無ければ自動でダウンロードします。ログは同じフォルダの `readytrans.log` に出ます。
+
 ## 必要なもの
 
 - Windows 10（2004 以降）または Windows 11
@@ -100,7 +108,13 @@ instructions = "アイテム名は英語のまま残してください。"
 
 ```powershell
 uv run pytest
+
+# exe を作る（dist/ReadyTrans.exe）
+powershell -ExecutionPolicy Bypass -File packaging/build.ps1
+dist/ReadyTrans.exe --self-test   # OCR などが exe に正しく入っているかを確認（結果は dist/selftest.log）
 ```
+
+main に push すると GitHub Actions が exe を作り、`v0.1.0` のようなタグを push すると Releases に載せます。
 
 | ファイル | 役割 |
 |---|---|
