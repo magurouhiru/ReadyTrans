@@ -1,0 +1,36 @@
+[project]
+name = "readytrans"
+version = "0.1.0"
+description = "ゲーム画面の英語を OCR で読み取り、ローカルの Gemma で日本語に訳して重ねて表示するアプリ"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.7",
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "Pillow>=10.0",
+    "mss>=9.0",
+    "windows-capture>=1.4; sys_platform == 'win32'",
+    "winrt-Windows.Media.Ocr>=2.0; sys_platform == 'win32'",
+    "winrt-Windows.Globalization>=2.0; sys_platform == 'win32'",
+    "winrt-Windows.Graphics.Imaging>=2.0; sys_platform == 'win32'",
+    "winrt-Windows.Storage.Streams>=2.0; sys_platform == 'win32'",
+    "winrt-Windows.Foundation>=2.0; sys_platform == 'win32'",
+    "winrt-Windows.Foundation.Collections>=2.0; sys_platform == 'win32'",
+]
+
+[project.scripts]
+readytrans = "readytrans.app:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/readytrans"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

@@ -1,0 +1,39 @@
+# このファイルを config.toml という名前でコピーして編集してください。
+
+# 使うゲームプロファイル（profiles/ フォルダ内のファイル名、拡張子なし）
+profile = "default"
+
+[llm]
+# "ollama" か "openai"（LM Studio や llama.cpp の server など OpenAI 互換 API）
+backend = "ollama"
+base_url = "http://localhost:11434"
+# VRAM の目安: gemma3:4b → 6GB, gemma3:12b → 12GB, gemma3:27b → 20GB 以上
+model = "gemma3:12b"
+temperature = 0.2
+timeout_seconds = 60
+
+[ocr]
+# 英語 OCR の言語タグ。Windows の「言語の設定」で英語の OCR 機能が必要です
+language = "en-US"
+# 小さい文字を読みやすくするための拡大率
+upscale = 2.0
+
+[hotkeys]
+# 範囲を選んで訳す
+select_and_translate = "ctrl+shift+t"
+# 前回の範囲をもう一度訳す
+retranslate = "ctrl+shift+r"
+# 自動モード（範囲を監視して、文字が変わったら訳す）の切り替え
+toggle_auto = "ctrl+shift+a"
+# 訳の表示を消す
+hide = "ctrl+shift+h"
+
+[overlay]
+# "inline": 元の文字の上に重ねる / "panel": 範囲の下にまとめて表示
+mode = "inline"
+font_family = "Yu Gothic UI"
+font_size = 16
+background_opacity = 0.85
+
+[auto]
+interval_ms = 1000

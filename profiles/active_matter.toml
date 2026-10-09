@@ -1,0 +1,17 @@
+name = "Active Matter"
+
+instructions = """
+これは SF の脱出シューター「Active Matter」の画面です。
+アイテム名・武器名・弾薬名は原文の英語のまま残してください。
+UI のボタンや短いラベルは簡潔に訳してください。
+"""
+
+# 遊びながら気づいた用語をここに足していってください。
+# "英語" = "日本語"（空文字なら原文のまま）
+[glossary]
+"Active Matter" = ""
+"Raid" = "レイド"
+"Extraction" = "脱出"
+"Stash" = "倉庫"
+"Loadout" = "装備"
+"Trader" = "トレーダー"
