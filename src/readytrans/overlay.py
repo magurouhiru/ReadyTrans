@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
@@ -10,6 +11,9 @@ from PySide6.QtWidgets import QWidget
 
 from .capture import Region
 from .config import OverlayConfig
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,7 +74,13 @@ class TranslationOverlay(QWidget):
     def _refresh(self) -> None:
         if not self.isVisible():
             self.show()
+        self.raise_()
         self.update()
+        g = self.geometry()
+        log.info(
+            "オーバーレイ: 表示中=%s 位置=(%d, %d, %d x %d) 訳 %d 件",
+            self.isVisible(), g.x(), g.y(), g.width(), g.height(), len(self._items),
+        )
 
     def _font(self, size: int) -> QFont:
         font = QFont(self.cfg.font_family)
@@ -96,7 +106,14 @@ class TranslationOverlay(QWidget):
         p.setFont(self._font(size))
         p.drawText(box.adjusted(4, 3, -4, -3), int(flags | Qt.AlignmentFlag.AlignLeft), text)
 
-    def paintEvent(self, _event) -> None:
+    def paintEvent(self, event) -> None:
+        try:
+            self._paint()
+        except Exception:
+            log.exception("オーバーレイの描画に失敗しました")
+
+    def _paint(self) -> None:
+        log.info("オーバーレイ描画: 訳 %d 件, 状態=%r", len(self._items), self._status)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         offset = self.geometry().topLeft()

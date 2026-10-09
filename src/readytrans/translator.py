@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 import httpx
 
 from .cache import TranslationCache
 from .config import LLMConfig, Profile
+
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 あなたはゲームの翻訳者です。ゲーム画面から OCR で読み取った英語を自然な日本語に訳します。
@@ -90,7 +93,10 @@ class Translator:
 
     def _translate_batch(self, texts: list[str]) -> list[str] | None:
         content = self._chat(json.dumps(texts, ensure_ascii=False), len(texts))
-        return parse_translations(content, len(texts))
+        parsed = parse_translations(content, len(texts))
+        if parsed is None:
+            log.warning("翻訳AIの返事を読み取れませんでした。1件ずつ訳し直します。返事: %r", content[:500])
+        return parsed
 
     def _translate_one(self, text: str) -> str:
         content = self._chat(json.dumps([text], ensure_ascii=False), 1)

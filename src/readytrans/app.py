@@ -5,10 +5,11 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QIcon, QPixmap, QColor
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -44,11 +45,23 @@ class Pipeline:
         self.translator = Translator(cfg.llm, cfg.profile, cache)
 
     def read(self, region: Region):
+        start = time.perf_counter()
         image = self.capture.grab(region)
-        return group_lines(self.ocr.recognize(image))
+        log.info("キャプチャ: %s → 画像 %dx%d", region, image.shape[1], image.shape[0])
+        blocks = group_lines(self.ocr.recognize(image))
+        log.info("OCR 完了（%.2f 秒）: %d 件", time.perf_counter() - start, len(blocks))
+        for b in blocks:
+            log.info("  OCR: %r @ (%.0f, %.0f, %.0f x %.0f)", b.text, b.x, b.y, b.w, b.h)
+        return blocks
 
     def translate(self, blocks):
-        return self.translator.translate([b.text for b in blocks])
+        start = time.perf_counter()
+        log.info("翻訳開始: %d 件", len(blocks))
+        result = self.translator.translate([b.text for b in blocks])
+        log.info("翻訳完了（%.2f 秒）", time.perf_counter() - start)
+        for b, ja in zip(blocks, result):
+            log.info("  %r → %r", b.text, ja)
+        return result
 
 
 class Bridge(QObject):
@@ -60,11 +73,14 @@ class Bridge(QObject):
     failed = Signal(object, str)
 
 
-class App:
+class App(QObject):
+    # QObject にして、ワーカースレッドからのシグナルを確実に UI スレッドで受け取る
+
     def __init__(self, base_dir: Path):
+        self.qt = QApplication.instance() or QApplication(sys.argv)
+        super().__init__()
         self.base_dir = base_dir
         self.cfg = load_config(base_dir)
-        self.qt = QApplication.instance() or QApplication(sys.argv)
         self.qt.setQuitOnLastWindowClosed(False)
 
         self.bridge = Bridge()
@@ -215,6 +231,10 @@ class App:
             Item(self.overlay.to_logical(region, b.x, b.y, b.w, b.h), ja)
             for b, ja in zip(blocks, translations)
         ]
+        log.info("表示: %d 件（画面倍率 %.2f）", len(items), self.overlay.dpr)
+        for item in items:
+            r = item.rect
+            log.info("  表示位置 (%.0f, %.0f, %.0f x %.0f): %r", r.x(), r.y(), r.width(), r.height(), item.text)
         self.overlay.show_translations(region, items)
 
     def on_failed(self, region: Region | None, message: str) -> None:
