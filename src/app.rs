@@ -462,8 +462,10 @@ impl App {
             return;
         }
         self.expanded = Some(expanded);
+        // 画面全体をぴったり覆うと、ドライバが「全画面のゲーム」とみなして透明にならず真っ暗になる。
+        // 下を 1px だけ空けて、普通のウィンドウとして重ねる
         let (w, h) = if expanded {
-            unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
+            unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) - 1) }
         } else {
             (1, 1)
         };
@@ -472,6 +474,7 @@ impl App {
                 log::warn!("ウィンドウの位置を変えられませんでした: {e}");
             }
         }
+        log::info!("オーバーレイ: {w}x{h}");
         ctx.request_repaint();
     }
 
