@@ -1,8 +1,5 @@
-__pycache__/
-*.pyc
-.venv/
-dist/
-build/
-*.spec
-cache.sqlite3
+/target
+/dist
 config.toml
+cache.jsonl
+*.log

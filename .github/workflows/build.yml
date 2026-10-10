@@ -2,13 +2,13 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, rust]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Releases に公開するときのタグ名（例: v0.1.0）。空ならビルドだけ"
+        description: "Releases に公開するときのタグ名（例: v0.2.0）。空ならビルドだけ"
         required: false
         default: ""
 
@@ -21,23 +21,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.13"
+      - uses: Swatinem/rust-cache@v2
 
       - name: Test
-        run: uv run pytest -q
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy --release -- -D warnings
 
       - name: Build ReadyTrans.exe
-        shell: pwsh
-        run: ./packaging/build.ps1
+        run: cargo build --release
 
       - name: Self-test the exe
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/readytrans.exe dist/ReadyTrans.exe
           $p = Start-Process dist/ReadyTrans.exe -ArgumentList "--self-test" -Wait -PassThru
           Get-Content dist/selftest.log -Encoding utf8
+          Get-Content dist/readytrans.log -Encoding utf8
           if ($p.ExitCode -ne 0) { exit 1 }
+          "サイズ: {0:N1} MB" -f ((Get-Item dist/ReadyTrans.exe).Length / 1MB)
 
       - uses: actions/upload-artifact@v4
         with:

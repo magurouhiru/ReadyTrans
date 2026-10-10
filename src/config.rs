@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 /// exe に埋め込む設定のひな形。初回起動時に exe の隣へ書き出す。
-pub const CONFIG_EXAMPLE: &str = include_str!("../../config.example.toml");
+pub const CONFIG_EXAMPLE: &str = include_str!("../config.example.toml");
 pub const BUNDLED_PROFILES: &[(&str, &str)] = &[
-    ("default.toml", include_str!("../../profiles/default.toml")),
-    ("active_matter.toml", include_str!("../../profiles/active_matter.toml")),
+    ("default.toml", include_str!("../profiles/default.toml")),
+    ("active_matter.toml", include_str!("../profiles/active_matter.toml")),
 ];
 
 #[derive(Debug, Clone, Deserialize)]

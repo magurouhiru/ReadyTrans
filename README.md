@@ -20,7 +20,6 @@
 
 - Windows 10（2004 以降）または Windows 11
 - [Ollama](https://ollama.com/)（Windows 版をインストールするか、下の Docker で動かします）
-- [uv](https://docs.astral.sh/uv/)（Python の実行環境をまとめて用意してくれるツール）
 - Windows の英語 OCR（「設定 > 時刻と言語 > 言語と地域」で英語を追加すると入ります）
 
 ## セットアップ
@@ -37,29 +36,15 @@ docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ol
 
 ### ReadyTrans
 
-```powershell
-# 1. このリポジトリを取得して依存関係を入れる
-git clone https://github.com/magurouhiru/ReadyTrans.git
-cd ReadyTrans
-uv sync
+[Releases](https://github.com/magurouhiru/ReadyTrans/releases) の `ReadyTrans.exe` を置いて起動するだけです。動かないときは、PowerShell で `ReadyTrans.exe --self-test` を実行すると、OCR・設定・翻訳AIへの接続・画面キャプチャを確認して結果を `selftest.log` に書きます。
 
-# 2. 設定ファイルを作る（モデル名やプロファイルを編集）
-copy config.example.toml config.toml
-
-# 3. 翻訳と OCR が動くか確認
-uv run python scripts/check_setup.py
-
-# 4. 起動
-uv run readytrans
-```
-
-起動するとタスクトレイに青いアイコンが出ます。設定のモデルが Ollama に無ければ自動でダウンロードします（translategemma:4b は約3GB、進み具合はログとトレイの通知に出ます）。
+起動するとタスクトレイに青いアイコンが出ます。設定のモデルが Ollama に無ければ自動でダウンロードします（translategemma:4b は約3GB、進み具合はログと画面右下の通知に出ます）。
 
 ## 使い方
 
 | ホットキー | 動作 |
 |---|---|
-| `Ctrl+Shift+T` | 範囲をドラッグで選んで訳す |
+| `Ctrl+Shift+T` | 範囲をドラッグで選んで訳す（Esc か右クリックで中止） |
 | `Ctrl+Shift+R` | 前回の範囲をもう一度訳す |
 | `Ctrl+Shift+A` | 自動モード（範囲を監視し、文字が変わったら訳す）の切り替え |
 | `Ctrl+Shift+H` | 訳の表示を消す |
@@ -106,45 +91,24 @@ instructions = "アイテム名は英語のまま残してください。"
 
 ## 開発
 
-```powershell
-uv run pytest
-
-# exe を作る（dist/ReadyTrans.exe）
-powershell -ExecutionPolicy Bypass -File packaging/build.ps1
-dist/ReadyTrans.exe --self-test   # OCR などが exe に正しく入っているかを確認（結果は dist/selftest.log）
-```
-
-main に push すると GitHub Actions が exe を作り、`v0.1.0` のようなタグを push するか、Actions の「Build」を手動実行して `release_tag` を入れると Releases に載せます。
-
-| ファイル | 役割 |
-|---|---|
-| `src/readytrans/app.py` | 全体の流れ・トレイアイコン |
-| `src/readytrans/capture.py` | 画面キャプチャ（Windows Graphics Capture、だめなら mss） |
-| `src/readytrans/ocr.py` | Windows 標準 OCR |
-| `src/readytrans/layout.py` | OCR の行を段落にまとめる |
-| `src/readytrans/translator.py` | Ollama / OpenAI 互換 API での翻訳 |
-| `src/readytrans/cache.py` | 訳のキャッシュ（SQLite） |
-| `src/readytrans/overlay.py` | 範囲選択と訳の表示 |
-| `src/readytrans/hotkey.py` | グローバルホットキー |
-
-### Rust 版（`rust/`）
-
-同じ機能を Rust で作り直したものです。設定ファイル（`config.toml`、`profiles/`）は Python 版と同じ書式で、exe の隣に置かれます。キャッシュは `cache.jsonl` です。
+Rust で書いています（[rustup](https://rustup.rs/) で入れられます）。
 
 ```powershell
-cd rust
 cargo test                  # 翻訳・設定・段落まとめの単体テスト（Windows 以外でも動く）
 cargo build --release       # target/release/readytrans.exe
-target/release/readytrans.exe --self-test   # 結果は selftest.log
+target/release/readytrans.exe --self-test   # 結果は exe の隣の selftest.log
 ```
+
+設定・キャッシュ（`cache.jsonl`）・ログは exe と同じフォルダに置かれます。push すると GitHub Actions が exe を作って自己診断し、`v0.2.0` のようなタグを push するか、Actions の「Build」を手動実行して `release_tag` を入れると Releases に載せます。
 
 | ファイル | 役割 |
 |---|---|
-| `rust/src/app.rs` | 全体の流れ・オーバーレイ（egui）・範囲選択・トレイ・ホットキー |
-| `rust/src/capture.rs` | 画面キャプチャ（Windows Graphics Capture、だめなら GDI） |
-| `rust/src/ocr.rs` | Windows 標準 OCR |
-| `rust/src/layout.rs` | OCR の行を段落にまとめる |
-| `rust/src/translator.rs` | Ollama / OpenAI 互換 API での翻訳 |
-| `rust/src/cache.rs` | 訳のキャッシュ |
-| `rust/src/config.rs` | 設定ファイルとプロファイル |
-| `rust/src/selftest.rs` | `--self-test` |
+| `src/app.rs` | 全体の流れ・オーバーレイ（egui）・範囲選択・トレイ・ホットキー |
+| `src/capture.rs` | 画面キャプチャ（Windows Graphics Capture、だめなら GDI） |
+| `src/ocr.rs` | Windows 標準 OCR |
+| `src/layout.rs` | OCR の行を段落にまとめる |
+| `src/translator.rs` | Ollama / OpenAI 互換 API での翻訳 |
+| `src/cache.rs` | 訳のキャッシュ |
+| `src/config.rs` | 設定ファイルとプロファイル（`config.example.toml` と `profiles/` を exe に埋め込む） |
+| `src/selftest.rs` | `--self-test` |
+| `src/logger.rs` | ログ（`readytrans.log`） |
