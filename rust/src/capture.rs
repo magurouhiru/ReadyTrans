@@ -109,7 +109,7 @@ fn grab_gdi(region: Region) -> Result<Bgra, String> {
         if lines == 0 {
             return Err("GetDIBits に失敗しました".into());
         }
-        for px in data.chunks_exact_mut(4) {
+        for px in data.as_chunks_mut::<4>().0 {
             px[3] = 255;
         }
         Ok(Bgra { w: w as u32, h: h as u32, data })
