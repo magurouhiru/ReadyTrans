@@ -126,3 +126,25 @@ main に push すると GitHub Actions が exe を作り、`v0.1.0` のような
 | `src/readytrans/cache.py` | 訳のキャッシュ（SQLite） |
 | `src/readytrans/overlay.py` | 範囲選択と訳の表示 |
 | `src/readytrans/hotkey.py` | グローバルホットキー |
+
+### Rust 版（`rust/`）
+
+同じ機能を Rust で作り直したものです。設定ファイル（`config.toml`、`profiles/`）は Python 版と同じ書式で、exe の隣に置かれます。キャッシュは `cache.jsonl` です。
+
+```powershell
+cd rust
+cargo test                  # 翻訳・設定・段落まとめの単体テスト（Windows 以外でも動く）
+cargo build --release       # target/release/readytrans.exe
+target/release/readytrans.exe --self-test   # 結果は selftest.log
+```
+
+| ファイル | 役割 |
+|---|---|
+| `rust/src/app.rs` | 全体の流れ・オーバーレイ（egui）・範囲選択・トレイ・ホットキー |
+| `rust/src/capture.rs` | 画面キャプチャ（Windows Graphics Capture、だめなら GDI） |
+| `rust/src/ocr.rs` | Windows 標準 OCR |
+| `rust/src/layout.rs` | OCR の行を段落にまとめる |
+| `rust/src/translator.rs` | Ollama / OpenAI 互換 API での翻訳 |
+| `rust/src/cache.rs` | 訳のキャッシュ |
+| `rust/src/config.rs` | 設定ファイルとプロファイル |
+| `rust/src/selftest.rs` | `--self-test` |
